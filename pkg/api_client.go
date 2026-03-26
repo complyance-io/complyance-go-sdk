@@ -185,8 +185,11 @@ func (a *APIClient) serializeRequest(request *UnifyRequest) map[string]interface
 		}
 	}
 
-	// Use document_type_string if available, otherwise document_type value
-	if request.DocumentTypeString != nil {
+	// Prefer explicit V2 top-level documentType object when present.
+	if request.DocumentTypeV2 != nil && len(request.DocumentTypeV2) > 0 {
+		data["documentType"] = request.DocumentTypeV2
+	} else if request.DocumentTypeString != nil {
+		// Use document_type_string if available, otherwise document_type value
 		data["documentType"] = strings.ToUpper(*request.DocumentTypeString)
 	} else {
 		data["documentType"] = strings.ToUpper(string(request.DocumentType))
@@ -238,6 +241,12 @@ func (a *APIClient) serializeRequest(request *UnifyRequest) map[string]interface
 
 	if request.CorrelationID != nil {
 		data["correlationId"] = *request.CorrelationID
+	}
+
+	if request.SourceOrigin != nil {
+		data["sourceOrigin"] = *request.SourceOrigin
+	} else {
+		data["sourceOrigin"] = "SDK"
 	}
 
 	return data
@@ -297,7 +306,7 @@ func (a *APIClient) handleSuccessResponse(responseBody string) (*UnifyResponse, 
 	// Log the complete raw response
 	log.Println("📥 API RAW RESPONSE:")
 	log.Println(responseBody)
-	
+
 	var responseData map[string]interface{}
 	err := json.Unmarshal([]byte(responseBody), &responseData)
 	if err != nil {

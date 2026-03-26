@@ -2,7 +2,7 @@
 SDK Configuration for the Complyance SDK matching Python SDK exactly.
 */
 package complyancesdk
-
+//
 // SDKConfig model matching Python SDK
 type SDKConfig struct {
 	APIKey                    string       `json:"api_key"`

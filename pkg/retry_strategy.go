@@ -7,6 +7,7 @@ import (
 	"log"
 	"math"
 	"math/rand"
+	"strconv"
 	"time"
 )
 
@@ -61,11 +62,11 @@ func (r *RetryStrategy) Execute(operation func() (interface{}, error), operation
 
 	// If we get here, all retries failed
 	if sdkErr, ok := lastError.(*SDKError); ok {
-		// Create max retries exceeded error
-		maxRetriesError := NewErrorDetailWithCode(
-			ErrorCodeMaxRetriesExceeded,
-			"Operation failed after "+string(r.config.MaxAttempts)+" retry attempts",
-		)
+			// Create max retries exceeded error
+			maxRetriesError := NewErrorDetailWithCode(
+				ErrorCodeMaxRetriesExceeded,
+				"Operation failed after "+strconv.Itoa(r.config.MaxAttempts)+" retry attempts",
+			)
 		maxRetriesError.Suggestion = &[]string{"Maximum retry attempts exceeded. Check your network connection and try again later"}[0]
 		maxRetriesError.AddContextValue("maxAttempts", r.config.MaxAttempts)
 		maxRetriesError.AddContextValue("originalError", sdkErr.String())

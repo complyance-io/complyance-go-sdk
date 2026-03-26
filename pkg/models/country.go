@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 )
-
+//
 // Country represents a country for document processing
 type Country struct {
 	// Code is the ISO 3166-1 alpha-2 country code

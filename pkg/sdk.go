@@ -57,9 +57,9 @@ func Configure(sdkConfig *SDKConfig) error {
 // validateEnvironmentCountryRestrictions Validate country restrictions based on environment
 func validateEnvironmentCountryRestrictions(environment Environment) {
 	if environment == EnvironmentSandbox || environment == EnvironmentSimulation || environment == EnvironmentProduction {
-		// For production environments, only SA and MY are allowed
+		// For production environments, only SA, MY, and AE (UAE) are allowed
 		// This validation happens at configuration time, not at request time
-		log.Printf("Production environment detected: %s. Only SA and MY countries will be allowed.", environment)
+		log.Printf("Production environment detected: %s. Only SA (Saudi Arabia), MY (Malaysia), and AE (UAE) countries will be allowed.", environment)
 	} else {
 		// For development environments, all countries are allowed
 		log.Printf("Development environment detected: %s. All countries are allowed.", environment)
@@ -206,6 +206,11 @@ func ProcessQueuedSubmissionsFirst() {
 
 
 // validateCountryForEnvironment Validate country restrictions based on current environment
+// Implements the three-tier country access control:
+// - SA: Allowed in all production environments (SANDBOX, SIMULATION, PRODUCTION)
+// - MY: Allowed in SANDBOX and PRODUCTION only (blocked in SIMULATION)
+// - AE: Allowed in SANDBOX and PRODUCTION only (blocked in SIMULATION)
+// - Others: Blocked in all production environments
 func validateCountryForEnvironment(country Country, environment Environment) error {
 	if environment == EnvironmentSandbox || environment == EnvironmentSimulation || environment == EnvironmentProduction {
 		// SA is allowed in all production environments
@@ -218,16 +223,27 @@ func validateCountryForEnvironment(country Country, environment Environment) err
 			if environment == EnvironmentSimulation {
 				return NewSDKError(NewErrorDetailWithCode(
 					ErrorCodeInvalidArgument,
-					"Country not allowed for simulation environment",
+					"Country not allowed for simulation environment. MY (Malaysia) is not allowed in SIMULATION environment. Use SANDBOX or PRODUCTION.",
 				))
 			}
 			return nil // MY is allowed in SANDBOX and PRODUCTION
 		}
 
+		// AE (UAE) is only allowed in SANDBOX and PRODUCTION (not SIMULATION)
+		if country == CountryAE {
+			if environment == EnvironmentSimulation {
+				return NewSDKError(NewErrorDetailWithCode(
+					ErrorCodeInvalidArgument,
+					"Country not allowed for simulation environment. AE (UAE) is not allowed in SIMULATION environment. Use SANDBOX or PRODUCTION.",
+				))
+			}
+			return nil // AE is allowed in SANDBOX and PRODUCTION
+		}
+
 		// All other countries are blocked in production environments
 		return NewSDKError(NewErrorDetailWithCode(
 			ErrorCodeInvalidArgument,
-			fmt.Sprintf("Country not allowed for production environment. Only SA and MY are allowed for %s. Use DEV/TEST/STAGE for other countries.", environment),
+			fmt.Sprintf("Country not allowed for production environment. Only SA, MY, and AE are allowed for %s. Use DEV/TEST/STAGE for other countries.", environment),
 		))
 	}
 

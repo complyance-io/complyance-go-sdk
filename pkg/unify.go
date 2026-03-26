@@ -14,12 +14,41 @@ import (
 	"time"
 )
 
-
 // PushToUnify Push to Unify API with logical document types but full control over operation, mode, and purpose
 func PushToUnify(
 	sourceName string,
 	sourceVersion string,
 	logicalType LogicalDocType,
+	country Country,
+	operation Operation,
+	mode Mode,
+	purpose Purpose,
+	payload map[string]interface{},
+	destinations []*Destination,
+) (*UnifyResponse, error) {
+	policy := CountryPolicyRegistryInstance.Evaluate(country, logicalType)
+	mergedPayload := deepMergeIntoMetaConfig(payload, policy.GetMetaConfigFlags())
+	setInvoiceDataDocumentType(mergedPayload, policy.GetDocumentType())
+
+	documentTypeV2 := MapLogicalDocTypeToGetsV2(logicalType)
+	return PushToUnifyV2(
+		sourceName,
+		sourceVersion,
+		documentTypeV2,
+		country,
+		operation,
+		mode,
+		purpose,
+		mergedPayload,
+		destinations,
+	)
+}
+
+// PushToUnifyV2 Push to Unify API using GETS V2 document type model
+func PushToUnifyV2(
+	sourceName string,
+	sourceVersion string,
+	documentTypeV2 *GetsDocumentTypeV2,
 	country Country,
 	operation Operation,
 	mode Mode,
@@ -70,10 +99,10 @@ func PushToUnify(
 		finalSourceVersion = sourceVersion
 	}
 
-	if logicalType == "" {
+	if documentTypeV2 == nil {
 		return nil, NewSDKError(NewErrorDetailWithCode(
 			ErrorCodeMissingField,
-			"Logical document type is required",
+			"GETS V2 documentType is required",
 		))
 	}
 
@@ -117,14 +146,18 @@ func PushToUnify(
 		return nil, err
 	}
 
-	// Evaluate country policy to get base document type and meta.config flags
-	policy := CountryPolicyRegistryInstance.Evaluate(country, logicalType)
+	normalizedDocumentTypeV2, err := normalizeAndValidateDocumentTypeV2(documentTypeV2)
+	if err != nil {
+		return nil, err
+	}
 
-	// Merge meta.config flags into payload
-	mergedPayload := deepMergeIntoMetaConfig(payload, policy.GetMetaConfigFlags())
+	// Keep V2 payload free of meta.config injection, but enforce V2 shape markers
+	// so backend does not downgrade to schema v1.
+	requestPayload := payload
+	setPayloadDocumentTypeV2(requestPayload, normalizedDocumentTypeV2)
+	setInvoiceDataDocumentTypeFromV2(requestPayload, normalizedDocumentTypeV2.Base)
 
-	// Auto-set invoice_data.document_type based on LogicalDocType
-	setInvoiceDataDocumentType(mergedPayload, logicalType)
+	baseDocumentType := resolveBaseDocumentTypeFromV2(normalizedDocumentTypeV2.Base)
 
 	// Create source reference
 	sourceRef := NewSourceRef(finalSourceName, finalSourceVersion)
@@ -132,7 +165,7 @@ func PushToUnify(
 	// Auto-generate destinations if none provided and auto-generation is enabled
 	var finalDestinations []*Destination
 	if destinations == nil && globalSDK.config.AutoGenerateTaxDestination {
-		finalDestinations = generateDefaultDestinations(string(country), getMetaConfigDocumentType(logicalType))
+		finalDestinations = generateDefaultDestinations(string(country), normalizedDocumentTypeV2.Base)
 	} else {
 		finalDestinations = destinations
 		if finalDestinations == nil {
@@ -142,10 +175,28 @@ func PushToUnify(
 
 	// Build and send request using the resolved base document type
 	return pushToUnifyInternalWithDocumentType(
-		sourceRef, policy.GetBaseType(),
-		getMetaConfigDocumentType(logicalType),
-		country, operation, mode, purpose, mergedPayload, finalDestinations,
+		sourceRef, baseDocumentType,
+		normalizedDocumentTypeV2.Base,
+		country, operation, mode, purpose, requestPayload, finalDestinations, normalizedDocumentTypeV2,
 	)
+}
+
+func setInvoiceDataDocumentType(payload map[string]interface{}, documentType string) {
+	if payload == nil {
+		return
+	}
+
+	invoiceDataRaw, exists := payload["invoice_data"]
+	if !exists {
+		return
+	}
+
+	invoiceData, ok := invoiceDataRaw.(map[string]interface{})
+	if !ok {
+		return
+	}
+
+	invoiceData["document_type"] = strings.ToLower(strings.TrimSpace(documentType))
 }
 
 // PushToUnifyFromJSON Push to Unify API with logical document types using JSON string payload
@@ -173,7 +224,7 @@ func PushToUnifyFromJSON(
 			ErrorCodeMalformedJSON,
 			fmt.Sprintf("Failed to parse JSON payload: %s", err.Error()),
 		).WithSuggestion(`Ensure the payload is valid JSON. Example: '{"invoiceNumber":"INV-123","amount":1000}'`)
-		
+
 		// Add context for debugging
 		payloadSnippet := jsonPayload
 		if len(jsonPayload) > 100 {
@@ -181,7 +232,7 @@ func PushToUnifyFromJSON(
 		}
 		errorDetail.AddContextValue("payloadSnippet", payloadSnippet)
 		errorDetail.AddContextValue("parseError", err.Error())
-		
+
 		return nil, NewSDKError(errorDetail)
 	}
 
@@ -226,11 +277,11 @@ func PushToUnifyFromStruct(
 		).WithSuggestion("Ensure the struct structure is compatible with the SDK payload format. " +
 			"The struct should be JSON serializable. " +
 			"Example: struct{InvoiceNumber string `json:\"invoiceNumber\"`; Amount int `json:\"amount\"`}")
-		
+
 		// Add context for debugging
 		errorDetail.AddContextValue("structType", fmt.Sprintf("%T", payloadStruct))
 		errorDetail.AddContextValue("conversionError", err.Error())
-		
+
 		return nil, NewSDKError(errorDetail)
 	}
 
@@ -241,11 +292,11 @@ func PushToUnifyFromStruct(
 			fmt.Sprintf("Failed to convert payload struct to map: %s", err.Error()),
 		).WithSuggestion("Ensure the struct structure is compatible with the SDK payload format. " +
 			"The struct should be JSON serializable and deserializable to a map structure.")
-		
+
 		// Add context for debugging
 		errorDetail.AddContextValue("structType", fmt.Sprintf("%T", payloadStruct))
 		errorDetail.AddContextValue("conversionError", err.Error())
-		
+
 		return nil, NewSDKError(errorDetail)
 	}
 
@@ -263,20 +314,104 @@ func PushToUnifyFromStruct(
 	)
 }
 
-// getMetaConfigDocumentType Get meta config document type
-func getMetaConfigDocumentType(logicalType LogicalDocType) string {
-	logicalName := string(logicalType)
-	if strings.Contains(logicalName, "CREDIT_NOTE") {
-		return "credit_note"
-	} else if strings.Contains(logicalName, "DEBIT_NOTE") {
-		return "debit_note"
+func normalizeAndValidateDocumentTypeV2(documentTypeV2 *GetsDocumentTypeV2) (*GetsDocumentTypeV2, error) {
+	if documentTypeV2 == nil {
+		return nil, NewSDKError(NewErrorDetailWithCode(
+			ErrorCodeInvalidArgument,
+			"Invalid GETS V2 documentType",
+		).WithSuggestion("Fix documentType.base/modifiers/variant according to country mapping rules."))
+	}
+
+	base := strings.ToLower(strings.TrimSpace(documentTypeV2.Base))
+	allowed := map[string]bool{
+		string(GetsDocumentBaseTaxInvoice):        true,
+		string(GetsDocumentBaseSimplifiedInvoice): true,
+		string(GetsDocumentBaseCreditNote):        true,
+		string(GetsDocumentBaseDebitNote):         true,
+	}
+	if !allowed[base] {
+		return nil, NewSDKError(NewErrorDetailWithCode(
+			ErrorCodeInvalidArgument,
+			"Invalid GETS V2 documentType",
+		).WithSuggestion("Fix documentType.base/modifiers/variant according to country mapping rules."))
+	}
+
+	normalizedModifiers := make([]string, 0, len(documentTypeV2.Modifiers))
+	seen := map[string]bool{}
+	for _, modifier := range documentTypeV2.Modifiers {
+		value := strings.ToLower(strings.TrimSpace(modifier))
+		if value == "" || seen[value] {
+			continue
+		}
+		normalizedModifiers = append(normalizedModifiers, value)
+		seen[value] = true
+	}
+
+	var normalizedVariant *string
+	if documentTypeV2.Variant != nil {
+		value := strings.ToLower(strings.TrimSpace(*documentTypeV2.Variant))
+		if value != "" {
+			normalizedVariant = &value
+		}
+	}
+
+	return &GetsDocumentTypeV2{
+		Base:      base,
+		Modifiers: normalizedModifiers,
+		Variant:   normalizedVariant,
+	}, nil
+}
+
+func buildMetaConfigFlagsFromDocumentTypeV2(country Country, documentTypeV2 *GetsDocumentTypeV2) map[string]interface{} {
+	modifiers := map[string]bool{}
+	for _, modifier := range documentTypeV2.Modifiers {
+		modifiers[strings.ToLower(modifier)] = true
+	}
+	base := strings.ToLower(strings.TrimSpace(documentTypeV2.Base))
+	isB2B := true
+	if modifiers["b2g"] || modifiers["b2c"] {
+		isB2B = false
+	} else if modifiers["b2b"] {
+		isB2B = true
 	} else {
-		return "tax_invoice"
+		isB2B = base != string(GetsDocumentBaseSimplifiedInvoice)
+	}
+
+	authority := getDefaultTaxAuthority(string(country))
+	if authority == "" {
+		authority = "UNKNOWN"
+	}
+
+	return map[string]interface{}{
+		"country":      string(country),
+		"authority":    authority,
+		"version":      "1.0",
+		"encoding":     "UTF-8",
+		"isExport":     modifiers["export"],
+		"isSelfBilled": modifiers["self_billed"],
+		"isThirdParty": modifiers["third_party"],
+		"isNominal":    modifiers["nominal_supply"],
+		"isSummary":    modifiers["summary"],
+		"isB2B":        isB2B,
+		"isPrepayment": false,
+		"isAdjusted":   false,
+		"isReceipt":    false,
 	}
 }
 
-// setInvoiceDataDocumentType Automatically sets the invoice_data.document_type field based on LogicalDocType
-func setInvoiceDataDocumentType(payload map[string]interface{}, logicalType LogicalDocType) {
+func setPayloadDocumentTypeV2(payload map[string]interface{}, documentTypeV2 *GetsDocumentTypeV2) {
+	payload["documentType"] = documentTypeV2
+
+	headerRaw, exists := payload["header"]
+	if !exists {
+		return
+	}
+	if header, ok := headerRaw.(map[string]interface{}); ok {
+		header["documentType"] = documentTypeV2
+	}
+}
+
+func setInvoiceDataDocumentTypeFromV2(payload map[string]interface{}, base string) {
 	if payload == nil {
 		return
 	}
@@ -291,21 +426,26 @@ func setInvoiceDataDocumentType(payload map[string]interface{}, logicalType Logi
 		return
 	}
 
-	// Determine document type string based on LogicalDocType
-	var documentType string
-	logicalName := string(logicalType)
-	if strings.Contains(logicalName, "CREDIT_NOTE") {
-		documentType = "credit_note"
-	} else if strings.Contains(logicalName, "DEBIT_NOTE") {
-		documentType = "debit_note"
-	} else {
-		documentType = "tax_invoice" // Default for TAX_INVOICE and SIMPLIFIED_TAX_INVOICE
+	switch base {
+	case string(GetsDocumentBaseCreditNote):
+		invoiceData["document_type"] = "credit_note"
+	case string(GetsDocumentBaseDebitNote):
+		invoiceData["document_type"] = "debit_note"
+	default:
+		invoiceData["document_type"] = "tax_invoice"
 	}
-
-	// Set the document_type field
-	invoiceData["document_type"] = documentType
 }
 
+func resolveBaseDocumentTypeFromV2(base string) DocumentType {
+	switch base {
+	case string(GetsDocumentBaseCreditNote):
+		return DocumentTypeCreditNote
+	case string(GetsDocumentBaseDebitNote):
+		return DocumentTypeDebitNote
+	default:
+		return DocumentTypeTaxInvoice
+	}
+}
 
 // deepMergeIntoMetaConfig Deep merge meta.config flags into payload. User values take precedence over policy defaults
 func deepMergeIntoMetaConfig(payload map[string]interface{}, configFlags map[string]interface{}) map[string]interface{} {
@@ -397,12 +537,13 @@ func pushToUnifyInternalWithDocumentType(
 	purpose Purpose,
 	payload map[string]interface{},
 	destinations []*Destination,
+	documentTypeV2 *GetsDocumentTypeV2,
 ) (*UnifyResponse, error) {
 	// Build UnifyRequest with custom document type string
 	now := time.Now().UTC().Format(time.RFC3339)
 	requestID := fmt.Sprintf("req_%d_%f", time.Now().UnixNano()/int64(time.Millisecond), rand.Float64())
 
-	request := NewUnifyRequestBuilder().
+	requestBuilder := NewUnifyRequestBuilder().
 		Source(buildSourceObject(sourceRef)).
 		DocumentType(baseDocumentType).
 		DocumentTypeString(documentTypeString).
@@ -416,7 +557,17 @@ func pushToUnifyInternalWithDocumentType(
 		RequestID(requestID).
 		Timestamp(now).
 		Env(mapEnvironmentToAPIValue(globalSDK.config.Environment)).
-		Build()
+		SourceOrigin("SDK")
+
+	if documentTypeV2 != nil {
+		requestBuilder.DocumentTypeV2(map[string]interface{}{
+			"base":      documentTypeV2.Base,
+			"modifiers": documentTypeV2.Modifiers,
+			"variant":   documentTypeV2.Variant,
+		})
+	}
+
+	request := requestBuilder.Build()
 
 	// Handle correlation ID
 	if globalSDK.config.CorrelationID != nil {
@@ -506,8 +657,8 @@ func isServerError(sdkErr *SDKError) bool {
 	}
 
 	// Fallback: use error codes only when HTTP status is unavailable
-	return sdkErr.ErrorDetail.Code != nil && 
-		   (*sdkErr.ErrorDetail.Code == ErrorCodeInternalServerError ||
+	return sdkErr.ErrorDetail.Code != nil &&
+		(*sdkErr.ErrorDetail.Code == ErrorCodeInternalServerError ||
 			*sdkErr.ErrorDetail.Code == ErrorCodeServiceUnavailable)
 }
 
@@ -551,4 +702,3 @@ func mapEnvironmentToAPIValue(environment Environment) string {
 		return "sandbox" // Default to sandbox for safety
 	}
 }
-

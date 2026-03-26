@@ -7,6 +7,8 @@ package complyancesdk
 
 import (
 	"fmt"
+	"os"
+	"strings"
 )
 
 // Environment enumeration matching Python SDK exactly
@@ -22,25 +24,92 @@ const (
 	EnvironmentProduction Environment = "PRODUCTION"
 )
 
-// GetBaseURL Get the base URL for this environment (matching Python SDK)
+var (
+	cachedEnvValue   string
+	envValueLoaded   bool
+)
+
+// getEnvValue gets the ENV value from system environment variable or .env files
+func getEnvValue() string {
+	if envValueLoaded {
+		return cachedEnvValue
+	}
+
+	// First, check system environment variable
+	if envValue := os.Getenv("ENV"); envValue != "" {
+		cachedEnvValue = envValue
+		envValueLoaded = true
+		return envValue
+	}
+
+	// Try to read from .env files in common locations
+	envFilePaths := []string{
+		".env",
+		"../.env",
+		"../../.env",
+		"../services/encore/.env",
+		"../../services/encore/.env",
+		"services/encore/.env",
+	}
+
+	for _, filePath := range envFilePaths {
+		if envValue := readEnvFromFile(filePath); envValue != "" {
+			cachedEnvValue = envValue
+			envValueLoaded = true
+			return envValue
+		}
+	}
+
+	// No ENV found, cache empty and return empty
+	envValueLoaded = true
+	cachedEnvValue = ""
+	return ""
+}
+
+// readEnvFromFile reads the ENV variable from a .env file
+func readEnvFromFile(filePath string) string {
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return ""
+	}
+
+	lines := strings.Split(string(data), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		if strings.HasPrefix(line, "ENV=") {
+			value := strings.TrimSpace(line[4:])
+			if (strings.HasPrefix(value, "\"") && strings.HasSuffix(value, "\"")) ||
+				(strings.HasPrefix(value, "'") && strings.HasSuffix(value, "'")) {
+				value = value[1 : len(value)-1]
+			}
+			return value
+		}
+	}
+
+	return ""
+}
+
+// GetBaseURL Get the base URL for this environment (matching Java SDK)
+// URLs are dynamically constructed based on the ENV environment variable.
+// If ENV is set to "dev", "test", or "stage", that subdomain is used.
+// If not set, defaults to "prod" (production).
+// LOCAL environment always uses localhost.
 func (e Environment) GetBaseURL() string {
-	switch e {
-	case EnvironmentDev:
-		return "https://prod.gets.complyance.io/unify"
-	case EnvironmentTest:
-		return "https://prod.gets.complyance.io/unify"
-	case EnvironmentStage:
-		return "https://prod.gets.complyance.io/unify"
-	case EnvironmentLocal:
+	if e == EnvironmentLocal {
 		return "http://127.0.0.1:4000/unify"
-	case EnvironmentSandbox:
-		return "https://prod.gets.complyance.io/unify"
-	case EnvironmentSimulation:
-		return "https://prod.gets.complyance.io/unify"
-	case EnvironmentProduction:
-		return "https://prod.gets.complyance.io/unify"
-	default:
-		return "https://prod.gets.complyance.io/unify" // Default to dev	
+	}
+
+	envValue := getEnvValue()
+	subdomain := "prod"
+	if envValue != "" {
+		subdomain = strings.ToLower(strings.TrimSpace(envValue))
+	}
+
+	return fmt.Sprintf("https://%s.gets.complyance.io/unify", subdomain)
 }
 
 // Country enumeration matching Python SDK

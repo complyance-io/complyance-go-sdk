@@ -11,27 +11,30 @@ import (
 
 // UnifyRequest model matching Python SDK
 type UnifyRequest struct {
-	Source             *Source        `json:"source"`
-	DocumentType       DocumentType   `json:"document_type"`
-	DocumentTypeString *string        `json:"document_type_string,omitempty"`
-	Country            string         `json:"country"`
-	Operation          *Operation     `json:"operation,omitempty"`
-	Mode               *Mode          `json:"mode,omitempty"`
-	Purpose            *Purpose       `json:"purpose,omitempty"`
+	Source             *Source                `json:"source"`
+	DocumentType       DocumentType           `json:"document_type"`
+	DocumentTypeString *string                `json:"document_type_string,omitempty"`
+	DocumentTypeV2     map[string]interface{} `json:"document_type_v2,omitempty"`
+	Country            string                 `json:"country"`
+	Operation          *Operation             `json:"operation,omitempty"`
+	Mode               *Mode                  `json:"mode,omitempty"`
+	Purpose            *Purpose               `json:"purpose,omitempty"`
 	Payload            map[string]interface{} `json:"payload,omitempty"`
-	APIKey             *string        `json:"api_key,omitempty"`
-	RequestID          *string        `json:"request_id,omitempty"`
-	Timestamp          *string        `json:"timestamp,omitempty"`
-	Env                *string        `json:"env,omitempty"`
-	Destinations       []*Destination `json:"destinations,omitempty"`
-	CorrelationID      *string        `json:"correlation_id,omitempty"`
+	APIKey             *string                `json:"api_key,omitempty"`
+	RequestID          *string                `json:"request_id,omitempty"`
+	Timestamp          *string                `json:"timestamp,omitempty"`
+	Env                *string                `json:"env,omitempty"`
+	Destinations       []*Destination         `json:"destinations,omitempty"`
+	CorrelationID      *string                `json:"correlation_id,omitempty"`
+	// SourceOrigin for Integration Engine payload filtering: "SDK" | "LOCAL"
+	SourceOrigin *string `json:"sourceOrigin,omitempty"`
 }
 
 // NewUnifyRequest creates a new UnifyRequest
 func NewUnifyRequest() *UnifyRequest {
 	now := time.Now().UTC().Format(time.RFC3339)
 	requestID := "req_" + strconv.FormatInt(time.Now().UnixNano()/int64(time.Millisecond), 10) + "_" + strconv.FormatFloat(rand.Float64(), 'f', -1, 64)
-	
+
 	return &UnifyRequest{
 		Payload:      make(map[string]interface{}),
 		Destinations: []*Destination{},
@@ -62,6 +65,11 @@ func (u *UnifyRequest) GetDocumentType() DocumentType {
 // GetDocumentTypeString getter for document type string
 func (u *UnifyRequest) GetDocumentTypeString() *string {
 	return u.DocumentTypeString
+}
+
+// GetDocumentTypeV2 getter for V2 document type payload
+func (u *UnifyRequest) GetDocumentTypeV2() map[string]interface{} {
+	return u.DocumentTypeV2
 }
 
 // GetCountry getter for country
@@ -119,6 +127,16 @@ func (u *UnifyRequest) GetCorrelationID() *string {
 	return u.CorrelationID
 }
 
+// GetSourceOrigin getter for source origin
+func (u *UnifyRequest) GetSourceOrigin() *string {
+	return u.SourceOrigin
+}
+
+// SetSourceOrigin setter for source origin
+func (u *UnifyRequest) SetSourceOrigin(sourceOrigin string) {
+	u.SourceOrigin = &sourceOrigin
+}
+
 // SetSource setter for source
 func (u *UnifyRequest) SetSource(source *Source) {
 	u.Source = source
@@ -132,6 +150,11 @@ func (u *UnifyRequest) SetDocumentType(documentType DocumentType) {
 // SetDocumentTypeString setter for document type string
 func (u *UnifyRequest) SetDocumentTypeString(documentTypeString string) {
 	u.DocumentTypeString = &documentTypeString
+}
+
+// SetDocumentTypeV2 setter for V2 document type payload
+func (u *UnifyRequest) SetDocumentTypeV2(documentTypeV2 map[string]interface{}) {
+	u.DocumentTypeV2 = documentTypeV2
 }
 
 // SetCountry setter for country
@@ -194,6 +217,7 @@ type UnifyRequestBuilder struct {
 	source             *Source
 	documentType       *DocumentType
 	documentTypeString *string
+	documentTypeV2     map[string]interface{}
 	country            string
 	operation          *Operation
 	mode               *Mode
@@ -205,6 +229,7 @@ type UnifyRequestBuilder struct {
 	env                *string
 	destinations       []*Destination
 	correlationID      *string
+	sourceOrigin       *string
 }
 
 // Source setter for source
@@ -222,6 +247,12 @@ func (b *UnifyRequestBuilder) DocumentType(documentType DocumentType) *UnifyRequ
 // DocumentTypeString setter for document type string
 func (b *UnifyRequestBuilder) DocumentTypeString(documentTypeString string) *UnifyRequestBuilder {
 	b.documentTypeString = &documentTypeString
+	return b
+}
+
+// DocumentTypeV2 setter for top-level GETS V2 documentType object
+func (b *UnifyRequestBuilder) DocumentTypeV2(documentTypeV2 map[string]interface{}) *UnifyRequestBuilder {
+	b.documentTypeV2 = documentTypeV2
 	return b
 }
 
@@ -291,15 +322,22 @@ func (b *UnifyRequestBuilder) CorrelationID(correlationID string) *UnifyRequestB
 	return b
 }
 
+// SourceOrigin setter for source origin (Integration Engine payload filtering: "SDK" | "LOCAL")
+func (b *UnifyRequestBuilder) SourceOrigin(sourceOrigin string) *UnifyRequestBuilder {
+	b.sourceOrigin = &sourceOrigin
+	return b
+}
+
 // Build builds the UnifyRequest
 func (b *UnifyRequestBuilder) Build() *UnifyRequest {
 	request := NewUnifyRequest()
-	
+
 	request.Source = b.source
 	if b.documentType != nil {
 		request.DocumentType = *b.documentType
 	}
 	request.DocumentTypeString = b.documentTypeString
+	request.DocumentTypeV2 = b.documentTypeV2
 	request.Country = b.country
 	request.Operation = b.operation
 	request.Mode = b.mode
@@ -315,15 +353,21 @@ func (b *UnifyRequestBuilder) Build() *UnifyRequest {
 	request.Env = b.env
 	request.Destinations = b.destinations
 	request.CorrelationID = b.correlationID
-	
+	if b.sourceOrigin != nil {
+		request.SourceOrigin = b.sourceOrigin
+	} else {
+		sdk := "SDK"
+		request.SourceOrigin = &sdk
+	}
+
 	return request
 }
 
 // SubmissionResponseOld Legacy submission response for backward compatibility
 type SubmissionResponseOld struct {
-	SubmissionID string            `json:"submission_id"`
-	Status       SubmissionStatus  `json:"status"`
-	Error        *ErrorDetail      `json:"error,omitempty"`
+	SubmissionID string           `json:"submission_id"`
+	Status       SubmissionStatus `json:"status"`
+	Error        *ErrorDetail     `json:"error,omitempty"`
 }
 
 // GetSubmissionID getter for submission ID
