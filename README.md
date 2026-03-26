@@ -5,7 +5,7 @@ The official Go SDK for the Complyance Unified e-invoicing platform.
 ## Installation
 
 ```bash
-go get github.com/complyance-io/sdk-go/v1
+go get github.com/complyance-io/complyance-go-sdk/v3
 ```
 
 ## Usage
@@ -18,9 +18,9 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/complyance-io/sdk-go/v1/pkg/config"
-	"github.com/complyance-io/sdk-go/v1/pkg/models"
-	sdk "github.com/complyance-io/sdk-go/v1/pkg"
+	"github.com/complyance-io/complyance-go-sdk/v3/pkg/config"
+	"github.com/complyance-io/complyance-go-sdk/v3/pkg/models"
+	sdk "github.com/complyance-io/complyance-go-sdk/v3/pkg"
 )
 
 func main() {
