@@ -4,12 +4,15 @@ Persistent Queue Manager implementation matching Python SDK exactly.
 package complyancesdk
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -21,6 +24,17 @@ type QueueStatus struct {
 	FailedCount     int  `json:"failed_count"`
 	SuccessCount    int  `json:"success_count"`
 	IsRunning       bool `json:"is_running"`
+}
+
+type QueueStatusDetailed struct {
+	PendingCount    int    `json:"pending_count"`
+	ProcessingCount int    `json:"processing_count"`
+	FailedCount     int    `json:"failed_count"`
+	SuccessCount    int    `json:"success_count"`
+	TotalCount      int    `json:"total_count"`
+	IsRunning       bool   `json:"is_running"`
+	IsPaused        bool   `json:"is_paused"`
+	QueueDir        string `json:"queue_dir"`
 }
 
 // GetPendingCount getter for pending count
@@ -56,12 +70,12 @@ func (q *QueueStatus) String() string {
 
 // PersistentSubmissionRecord model matching Python SDK
 type PersistentSubmissionRecord struct {
-	Payload     map[string]interface{} `json:"payload"`
-	SourceID    string                 `json:"source_id"`
-	Country     string                 `json:"country"`
-	DocumentType string                `json:"document_type"`
-	EnqueuedAt  string                 `json:"enqueued_at"`
-	Timestamp   int64                  `json:"timestamp"`
+	Payload      map[string]interface{} `json:"payload"`
+	SourceID     string                 `json:"source_id"`
+	Country      string                 `json:"country"`
+	DocumentType string                 `json:"document_type"`
+	EnqueuedAt   string                 `json:"enqueued_at"`
+	Timestamp    int64                  `json:"timestamp"`
 }
 
 // GetPayload getter for payload
@@ -100,6 +114,7 @@ type PersistentQueueManager struct {
 	local          bool
 	queueBasePath  string
 	isRunning      bool
+	isPaused       bool
 	processingLock bool
 	circuitBreaker *CircuitBreaker
 }
@@ -132,6 +147,7 @@ func NewPersistentQueueManager(apiKey string, local bool, circuitBreaker *Circui
 		local:          local,
 		queueBasePath:  queueBasePath,
 		isRunning:      false,
+		isPaused:       false,
 		processingLock: false,
 		circuitBreaker: circuitBreaker,
 	}
@@ -161,23 +177,22 @@ func (p *PersistentQueueManager) initializeQueueDirectories() {
 
 // Enqueue a payload submission
 func (p *PersistentQueueManager) Enqueue(submission *PayloadSubmission) error {
-	fileName := p.generateFileName(submission)
+	queueItemID := p.buildQueueItemID(
+		nil,
+		string(submission.GetCountry()),
+		string(submission.GetDocumentType()),
+		submission.GetPayload(),
+	)
+	fileName := queueItemID + ".json"
 	filePath := filepath.Join(p.queueBasePath, PendingDir, fileName)
 
-	// Check if file already exists (same document ID)
-	if _, err := os.Stat(filePath); err == nil {
-		log.Printf("Document already exists in queue: %s. Skipping duplicate submission.", fileName)
+	if p.existsAcrossQueues(fileName) {
 		return nil // Skip duplicate submission
 	}
 
 	// Parse the UnifyRequest JSON string to proper JSON object
 	jsonPayload := submission.GetPayload()
-	log.Printf("🔥 QUEUE: Received payload from submission with length: %d characters", len(jsonPayload))
-	log.Printf("🔥 QUEUE: Payload preview: %s", jsonPayload[:min(200, len(jsonPayload))])
-
-	// Verify the payload is not empty
 	if strings.TrimSpace(jsonPayload) == "" || jsonPayload == "{}" {
-		log.Printf("🔥 QUEUE: ERROR - Received empty or invalid payload: '%s'", jsonPayload)
 		return fmt.Errorf("cannot enqueue empty payload")
 	}
 
@@ -187,14 +202,23 @@ func (p *PersistentQueueManager) Enqueue(submission *PayloadSubmission) error {
 		return fmt.Errorf("failed to parse UnifyRequest JSON: %v", err)
 	}
 
-	// Create submission record with the parsed UnifyRequest as proper JSON object
-	record := &PersistentSubmissionRecord{
-		Payload:      unifyRequestMap, // Store as map instead of string
-		SourceID:     fmt.Sprintf("%s:%s", submission.GetSource().GetName(), submission.GetSource().GetVersion()),
-		Country:      string(submission.GetCountry()),
-		DocumentType: string(submission.GetDocumentType()),
-		EnqueuedAt:   time.Now().Format(time.RFC3339),
-		Timestamp:    time.Now().UnixNano() / int64(time.Millisecond),
+	now := time.Now().UTC().Format(time.RFC3339)
+	record := map[string]interface{}{
+		"queueItemId":     queueItemID,
+		"requestId":       unifyRequestMap["requestId"],
+		"attemptCount":    0,
+		"firstEnqueuedAt": now,
+		"lastAttemptAt":   nil,
+		"lastErrorCode":   nil,
+		"lastHttpStatus":  nil,
+		"nextRetryAt":     now,
+		"operationName":   "push_to_unify",
+		"payload":         unifyRequestMap,
+		"source_id":       fmt.Sprintf("%s:%s", submission.GetSource().GetName(), submission.GetSource().GetVersion()),
+		"country":         string(submission.GetCountry()),
+		"document_type":   string(submission.GetDocumentType()),
+		"enqueued_at":     now,
+		"timestamp":       time.Now().UnixNano() / int64(time.Millisecond),
 	}
 
 	// Write to file
@@ -207,7 +231,6 @@ func (p *PersistentQueueManager) Enqueue(submission *PayloadSubmission) error {
 		return fmt.Errorf("failed to write submission to file: %v", err)
 	}
 
-	log.Printf("🔥 QUEUE: Stored record to file: %s with payload length: %d", fileName, len(jsonPayload))
 	log.Printf("Enqueued submission to persistent storage: %s for source: %s:%s, country: %s",
 		fileName, submission.GetSource().GetName(), submission.GetSource().GetVersion(), submission.GetCountry())
 
@@ -215,6 +238,44 @@ func (p *PersistentQueueManager) Enqueue(submission *PayloadSubmission) error {
 	p.StartProcessing()
 
 	return nil
+}
+
+func (p *PersistentQueueManager) EnqueueForRetry(request *UnifyRequest, operationName string, errorCode *string, httpStatus *int) error {
+	if request == nil {
+		return nil
+	}
+	requestPayload := p.serializeUnifyRequestForQueue(request)
+	requestJSON, _ := json.Marshal(requestPayload)
+	queueItemID := p.buildQueueItemID(
+		request.GetRequestID(),
+		request.GetCountry(),
+		p.documentTypeToken(request),
+		string(requestJSON),
+	)
+	fileName := queueItemID + ".json"
+	if p.existsAcrossQueues(fileName) {
+		return nil
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	record := map[string]interface{}{
+		"queueItemId":     queueItemID,
+		"requestId":       request.GetRequestID(),
+		"attemptCount":    0,
+		"firstEnqueuedAt": now,
+		"lastAttemptAt":   nil,
+		"lastErrorCode":   errorCode,
+		"lastHttpStatus":  httpStatus,
+		"nextRetryAt":     now,
+		"operationName":   operationName,
+		"payload":         requestPayload,
+		"timestamp":       time.Now().UnixNano() / int64(time.Millisecond),
+	}
+	recordJSON, err := json.MarshalIndent(record, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(p.queueBasePath, PendingDir, fileName), recordJSON, 0644)
 }
 
 // generateFileName Generate filename for submission
@@ -265,6 +326,9 @@ func (p *PersistentQueueManager) StartProcessing() {
 
 // ProcessPendingSubmissionsNow Manually trigger processing of pending submissions
 func (p *PersistentQueueManager) ProcessPendingSubmissionsNow() {
+	if p.isPaused {
+		return
+	}
 	// Check circuit breaker state before manual processing
 	if p.circuitBreaker.IsOpen() {
 		currentTime := time.Now().UnixNano() / int64(time.Millisecond)
@@ -294,6 +358,9 @@ func (p *PersistentQueueManager) processPendingSubmissions() {
 	if !p.isRunning {
 		return
 	}
+	if p.isPaused {
+		return
+	}
 
 	if p.processingLock {
 		return
@@ -313,7 +380,6 @@ func (p *PersistentQueueManager) processPendingSubmissions() {
 	}
 
 	if len(files) == 0 {
-		log.Println("No pending submissions to process")
 		return
 	}
 
@@ -349,21 +415,42 @@ func (p *PersistentQueueManager) processPendingSubmissions() {
 
 // processSubmissionFile Process a single submission file
 func (p *PersistentQueueManager) processSubmissionFile(filePath string) error {
-	// Implementation would be similar to Python but adapted for Go
-	// For now, just log that we're processing it
 	fileName := filepath.Base(filePath)
-	log.Printf("Processing submission file: %s", fileName)
-
-	// Move to failed directory for now (in real implementation, would attempt to send)
-	failedPath := filepath.Join(p.queueBasePath, FailedDir, fileName)
-	if _, err := os.Stat(failedPath); os.IsNotExist(err) {
-		if err := os.Rename(filePath, failedPath); err != nil {
-			return fmt.Errorf("failed to move file to failed directory: %v", err)
-		}
-		log.Printf("Moved submission to failed directory: %s", fileName)
+	processingPath := filepath.Join(p.queueBasePath, ProcessingDir, fileName)
+	if err := os.Rename(filePath, processingPath); err != nil {
+		return err
 	}
 
-	return nil
+	raw, err := os.ReadFile(processingPath)
+	if err != nil {
+		return err
+	}
+	record := map[string]interface{}{}
+	if err := json.Unmarshal(raw, &record); err != nil {
+		return err
+	}
+
+	payloadMap, _ := record["payload"].(map[string]interface{})
+	request := p.mapToUnifyRequest(payloadMap)
+	if request == nil {
+		return p.moveProcessingToFailed(processingPath, record, "invalid queued payload")
+	}
+
+	if globalSDK == nil || globalSDK.apiClient == nil {
+		return p.moveProcessingToFailed(processingPath, record, "sdk not configured")
+	}
+
+	response, sendErr := globalSDK.apiClient.SendUnifyRequest(request)
+	if sendErr == nil && response != nil && response.GetStatus() == "success" {
+		successPath := filepath.Join(p.queueBasePath, SuccessDir, fileName)
+		return os.Rename(processingPath, successPath)
+	}
+
+	errMessage := "non-success response"
+	if sendErr != nil {
+		errMessage = sendErr.Error()
+	}
+	return p.moveProcessingToFailed(processingPath, record, errMessage)
 }
 
 // GetQueueStatus Get queue status
@@ -379,6 +466,21 @@ func (p *PersistentQueueManager) GetQueueStatus() *QueueStatus {
 		FailedCount:     failedCount,
 		SuccessCount:    successCount,
 		IsRunning:       p.isRunning,
+	}
+}
+
+func (p *PersistentQueueManager) GetQueueStatusDetailed() *QueueStatusDetailed {
+	status := p.GetQueueStatus()
+	total := status.PendingCount + status.ProcessingCount + status.FailedCount + status.SuccessCount
+	return &QueueStatusDetailed{
+		PendingCount:    status.PendingCount,
+		ProcessingCount: status.ProcessingCount,
+		FailedCount:     status.FailedCount,
+		SuccessCount:    status.SuccessCount,
+		TotalCount:      total,
+		IsRunning:       p.isRunning,
+		IsPaused:        p.isPaused,
+		QueueDir:        p.queueBasePath,
 	}
 }
 
@@ -414,12 +516,60 @@ func (p *PersistentQueueManager) RetryFailedSubmissions() {
 	for _, filePath := range files {
 		fileName := filepath.Base(filePath)
 		pendingPath := filepath.Join(pendingDir, fileName)
+
+		if p.existsAcrossQueues(fileName, FailedDir) {
+			_ = os.Remove(filePath)
+			continue
+		}
+
 		if err := os.Rename(filePath, pendingPath); err != nil {
 			log.Printf("Failed to move failed submission back to pending: %v", err)
 		} else {
 			log.Printf("Moved failed submission back to pending: %s", fileName)
 		}
 	}
+}
+
+func (p *PersistentQueueManager) RetryFailed(queueItemID string) bool {
+	if strings.TrimSpace(queueItemID) == "" {
+		return false
+	}
+	fileName := p.findFailedFilenameByQueueItemID(queueItemID)
+	if fileName == "" {
+		return false
+	}
+	failedPath := filepath.Join(p.queueBasePath, FailedDir, fileName)
+	pendingPath := filepath.Join(p.queueBasePath, PendingDir, fileName)
+	if _, err := os.Stat(failedPath); err != nil {
+		return false
+	}
+	if p.existsAcrossQueues(fileName, FailedDir) {
+		_ = os.Remove(failedPath)
+		return false
+	}
+	return os.Rename(failedPath, pendingPath) == nil
+}
+
+func (p *PersistentQueueManager) PauseProcessing() {
+	p.isPaused = true
+}
+
+func (p *PersistentQueueManager) ResumeProcessing() {
+	p.isPaused = false
+	p.StartProcessing()
+}
+
+func (p *PersistentQueueManager) DrainQueue(timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		status := p.GetQueueStatus()
+		if status.PendingCount == 0 && status.ProcessingCount == 0 {
+			return true
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	status := p.GetQueueStatus()
+	return status.PendingCount == 0 && status.ProcessingCount == 0
 }
 
 // CleanupOldSuccessFiles Clean up old success files
@@ -502,6 +652,7 @@ func (p *PersistentQueueManager) CleanupDuplicateFiles() {
 
 	// Get all files from all directories
 	fileMap := make(map[string]string)
+	queueItemMap := make(map[string]string)
 
 	dirs := []string{PendingDir, ProcessingDir, FailedDir, SuccessDir}
 	for _, dirName := range dirs {
@@ -514,7 +665,15 @@ func (p *PersistentQueueManager) CleanupDuplicateFiles() {
 
 		for _, filePath := range files {
 			fileName := filepath.Base(filePath)
-			existingFile, exists := fileMap[fileName]
+			queueItemID := p.readQueueItemIDFromFile(filePath, fileName)
+			dedupeKey := queueItemID
+			if strings.TrimSpace(dedupeKey) == "" {
+				dedupeKey = strings.TrimSuffix(fileName, ".json")
+			}
+			existingFile, exists := queueItemMap[dedupeKey]
+			if !exists {
+				existingFile, exists = fileMap[fileName]
+			}
 
 			if exists {
 				// File exists in multiple directories, keep the one with latest modification time
@@ -531,6 +690,7 @@ func (p *PersistentQueueManager) CleanupDuplicateFiles() {
 				if currentInfo.ModTime().After(existingInfo.ModTime()) {
 					// Delete the older file
 					os.Remove(existingFile)
+					queueItemMap[dedupeKey] = filePath
 					fileMap[fileName] = filePath
 					log.Printf("Removed duplicate file (older): %s", existingFile)
 				} else {
@@ -539,10 +699,235 @@ func (p *PersistentQueueManager) CleanupDuplicateFiles() {
 					log.Printf("Removed duplicate file (older): %s", filePath)
 				}
 			} else {
+				queueItemMap[dedupeKey] = filePath
 				fileMap[fileName] = filePath
 			}
 		}
 	}
 
 	log.Println("Duplicate file cleanup completed")
+}
+
+func (p *PersistentQueueManager) existsAcrossQueues(fileName string, excludeDir ...string) bool {
+	excluded := ""
+	if len(excludeDir) > 0 {
+		excluded = excludeDir[0]
+	}
+	dirs := []string{PendingDir, ProcessingDir, FailedDir, SuccessDir}
+	for _, dirName := range dirs {
+		if excluded != "" && dirName == excluded {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(p.queueBasePath, dirName, fileName)); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+func (p *PersistentQueueManager) buildQueueItemID(requestID *string, country string, documentType string, payload string) string {
+	if requestID != nil && strings.TrimSpace(*requestID) != "" {
+		re := regexp.MustCompile(`[^a-zA-Z0-9._-]`)
+		return re.ReplaceAllString(strings.TrimSpace(*requestID), "_")
+	}
+	hash := sha256.Sum256([]byte(country + "|" + documentType + "|" + payload))
+	return "qid_" + hex.EncodeToString(hash[:])[:20]
+}
+
+func (p *PersistentQueueManager) documentTypeToken(request *UnifyRequest) string {
+	if request.GetDocumentTypeString() != nil {
+		return *request.GetDocumentTypeString()
+	}
+	if request.GetDocumentTypeV2() != nil {
+		raw, _ := json.Marshal(request.GetDocumentTypeV2())
+		return string(raw)
+	}
+	return string(request.GetDocumentType())
+}
+
+func (p *PersistentQueueManager) serializeUnifyRequestForQueue(request *UnifyRequest) map[string]interface{} {
+	requestData := map[string]interface{}{
+		"country":      request.GetCountry(),
+		"payload":      request.GetPayload(),
+		"documentType": request.GetDocumentTypeV2(),
+		"sourceOrigin": "SDK",
+	}
+	if request.GetSource() != nil {
+		requestData["source"] = map[string]interface{}{
+			"name":    request.GetSource().GetName(),
+			"version": request.GetSource().GetVersion(),
+			"type":    request.GetSource().GetType(),
+		}
+	}
+	if request.GetOperation() != nil {
+		requestData["operation"] = string(*request.GetOperation())
+	}
+	if request.GetMode() != nil {
+		requestData["mode"] = string(*request.GetMode())
+	}
+	if request.GetPurpose() != nil {
+		requestData["purpose"] = string(*request.GetPurpose())
+	}
+	if request.GetAPIKey() != nil {
+		requestData["apiKey"] = *request.GetAPIKey()
+	}
+	if request.GetRequestID() != nil {
+		requestData["requestId"] = *request.GetRequestID()
+	}
+	if request.GetTimestamp() != nil {
+		requestData["timestamp"] = *request.GetTimestamp()
+	}
+	if request.GetEnv() != nil {
+		requestData["env"] = *request.GetEnv()
+	}
+	if request.GetCorrelationID() != nil {
+		requestData["correlationId"] = *request.GetCorrelationID()
+	}
+	if request.GetDocumentTypeV2() == nil || len(request.GetDocumentTypeV2()) == 0 {
+		requestData["documentType"] = strings.ToUpper(string(request.GetDocumentType()))
+	}
+	return requestData
+}
+
+func (p *PersistentQueueManager) mapToUnifyRequest(payload map[string]interface{}) *UnifyRequest {
+	if payload == nil {
+		return nil
+	}
+	sourceMap, _ := payload["source"].(map[string]interface{})
+	sourceName, _ := sourceMap["name"].(string)
+	sourceVersion, _ := sourceMap["version"].(string)
+	source := NewSource(sourceName, sourceVersion, nil)
+
+	country, _ := payload["country"].(string)
+	if strings.TrimSpace(country) == "" {
+		return nil
+	}
+	operationRaw, _ := payload["operation"].(string)
+	modeRaw, _ := payload["mode"].(string)
+	purposeRaw, _ := payload["purpose"].(string)
+	operation := Operation(strings.ToLower(operationRaw))
+	mode := Mode(strings.ToLower(modeRaw))
+	purpose := Purpose(strings.ToLower(purposeRaw))
+	payloadBody, _ := payload["payload"].(map[string]interface{})
+	apiKey, _ := payload["apiKey"].(string)
+	requestID, _ := payload["requestId"].(string)
+	timestamp, _ := payload["timestamp"].(string)
+	env, _ := payload["env"].(string)
+	correlationID, _ := payload["correlationId"].(string)
+
+	builder := NewUnifyRequestBuilder().
+		Source(source).
+		Country(country).
+		Operation(operation).
+		Mode(mode).
+		Purpose(purpose).
+		Payload(payloadBody).
+		APIKey(apiKey).
+		RequestID(requestID).
+		Timestamp(timestamp).
+		Env(env).
+		SourceOrigin("SDK")
+
+	if strings.TrimSpace(correlationID) != "" {
+		builder.CorrelationID(correlationID)
+	}
+
+	if documentTypeObj, ok := payload["documentType"].(map[string]interface{}); ok {
+		builder.DocumentTypeV2(documentTypeObj)
+		builder.DocumentType(resolveBaseDocumentTypeFromV2(fmt.Sprintf("%v", documentTypeObj["base"])))
+	} else if documentTypeRaw, ok := payload["documentType"].(string); ok {
+		documentType := strings.ToLower(strings.TrimSpace(documentTypeRaw))
+		builder.DocumentTypeString(documentType)
+		builder.DocumentType(resolveBaseDocumentTypeFromV2(documentType))
+	}
+
+	return builder.Build()
+}
+
+func (p *PersistentQueueManager) moveProcessingToFailed(processingPath string, record map[string]interface{}, reason string) error {
+	fileName := filepath.Base(processingPath)
+	failedPath := filepath.Join(p.queueBasePath, FailedDir, fileName)
+
+	attempts := 1
+	if val, ok := record["attemptCount"]; ok {
+		switch n := val.(type) {
+		case float64:
+			attempts = int(n) + 1
+		case int:
+			attempts = n + 1
+		case string:
+			if parsed, err := strconv.Atoi(n); err == nil {
+				attempts = parsed + 1
+			}
+		}
+	}
+
+	record["attemptCount"] = attempts
+	record["lastAttemptAt"] = time.Now().UTC().Format(time.RFC3339)
+	record["lastErrorMessage"] = reason
+	record["nextRetryAt"] = time.Now().Add(time.Duration(min(64, 1<<(attempts-1))) * time.Second).UTC().Format(time.RFC3339)
+
+	encoded, err := json.MarshalIndent(record, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(failedPath, encoded, 0644); err != nil {
+		return err
+	}
+	_ = os.Remove(processingPath)
+	return nil
+}
+
+func (p *PersistentQueueManager) findFailedFilenameByQueueItemID(queueItemID string) string {
+	normalizedID := strings.TrimSuffix(strings.TrimSpace(queueItemID), ".json")
+	if normalizedID == "" {
+		return ""
+	}
+
+	failedDir := filepath.Join(p.queueBasePath, FailedDir)
+	exactName := normalizedID + ".json"
+	if _, err := os.Stat(filepath.Join(failedDir, exactName)); err == nil {
+		return exactName
+	}
+
+	files, err := filepath.Glob(filepath.Join(failedDir, "*.json"))
+	if err != nil {
+		return ""
+	}
+
+	for _, filePath := range files {
+		fileName := filepath.Base(filePath)
+		fileStem := strings.TrimSuffix(fileName, ".json")
+		if fileStem == normalizedID || strings.HasPrefix(fileStem, normalizedID) {
+			return fileName
+		}
+
+		fileQueueID := p.readQueueItemIDFromFile(filePath, fileName)
+		if fileQueueID == normalizedID || fileQueueID == strings.TrimSpace(queueItemID) {
+			return fileName
+		}
+	}
+
+	return ""
+}
+
+func (p *PersistentQueueManager) readQueueItemIDFromFile(filePath string, fallbackFileName string) string {
+	raw, err := os.ReadFile(filePath)
+	if err != nil {
+		return strings.TrimSuffix(fallbackFileName, ".json")
+	}
+
+	var payload map[string]interface{}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return strings.TrimSuffix(fallbackFileName, ".json")
+	}
+
+	if value, ok := payload["queueItemId"]; ok && value != nil {
+		parsed := strings.TrimSpace(fmt.Sprintf("%v", value))
+		if parsed != "" {
+			return parsed
+		}
+	}
+
+	return strings.TrimSuffix(fallbackFileName, ".json")
 }

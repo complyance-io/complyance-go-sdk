@@ -8,8 +8,8 @@ package complyancesdk
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"math/rand"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -178,6 +178,30 @@ func PushToUnifyV2(
 		sourceRef, baseDocumentType,
 		normalizedDocumentTypeV2.Base,
 		country, operation, mode, purpose, requestPayload, finalDestinations, normalizedDocumentTypeV2,
+	)
+}
+
+func PushToUnifyWithDocumentType(
+	sourceName string,
+	sourceVersion string,
+	documentType *GetsDocumentType,
+	country Country,
+	operation Operation,
+	mode Mode,
+	purpose Purpose,
+	payload map[string]interface{},
+	destinations []*Destination,
+) (*UnifyResponse, error) {
+	return PushToUnifyV2(
+		sourceName,
+		sourceVersion,
+		documentType,
+		country,
+		operation,
+		mode,
+		purpose,
+		payload,
+		destinations,
 	)
 }
 
@@ -577,35 +601,17 @@ func pushToUnifyInternalWithDocumentType(
 	response, err := globalSDK.apiClient.SendUnifyRequest(request)
 	if err != nil {
 		if sdkErr, ok := err.(*SDKError); ok {
-			log.Printf("🔥 QUEUE: SDKError caught - Error: %v, ServerError: %v, QueueManager: %v",
-				sdkErr, isServerError(sdkErr), globalSDK.queueManager != nil)
-
-			// Check if the error is a 500-range server error and queue is enabled
-			if isServerError(sdkErr) && globalSDK.queueManager != nil {
-				// Store the complete UnifyRequest as JSON to maintain exact API format
-				completeRequestJSON, jsonErr := json.Marshal(request)
-				if jsonErr != nil {
-					log.Printf("Failed to convert UnifyRequest to JSON, using toString(): %v", jsonErr)
-					completeRequestJSON = []byte(fmt.Sprintf("%+v", request))
-				} else {
-					log.Printf("🔥 QUEUE: Successfully converted complete UnifyRequest to JSON with length: %d", len(completeRequestJSON))
-					log.Printf("🔥 QUEUE: Complete request JSON preview: %s", string(completeRequestJSON)[:min(200, len(completeRequestJSON))])
+			if shouldEnqueueForRetry(sdkErr) && globalSDK.queueManager != nil {
+				errorCode := ""
+				if sdkErr.ErrorDetail != nil && sdkErr.ErrorDetail.Code != nil {
+					errorCode = string(*sdkErr.ErrorDetail.Code)
 				}
-
-				// Create a Source object for backward compatibility with queue
-				source := NewSource(sourceRef.GetName(), sourceRef.GetVersion(), nil)
-
-				submission := NewPayloadSubmission(
-					string(completeRequestJSON), // Store complete UnifyRequest as JSON to maintain exact API format
-					source,
-					country,
-					baseDocumentType,
+				_ = globalSDK.queueManager.EnqueueForRetry(
+					request,
+					"push_to_unify",
+					&errorCode,
+					extractHTTPStatus(sdkErr),
 				)
-
-				log.Printf("🔥 QUEUE: Created PayloadSubmission with complete request length: %d", len(submission.GetPayload()))
-
-				// Enqueue the failed submission for background retry
-				globalSDK.queueManager.Enqueue(submission)
 
 				// Return a response indicating the submission was queued
 				queuedResponse := &UnifyResponse{
@@ -633,33 +639,61 @@ func pushToUnifyInternalWithDocumentType(
 // isServerError determines if an SDK error represents a server error (500-range HTTP status codes).
 // Only 500-range errors (500-599) should trigger queue access.
 func isServerError(sdkErr *SDKError) bool {
+	return shouldEnqueueForRetry(sdkErr)
+}
+
+func shouldEnqueueForRetry(sdkErr *SDKError) bool {
 	if sdkErr.ErrorDetail == nil {
 		return false
 	}
 
-	// Check HTTP status code in context
-	httpStatusObj := sdkErr.ErrorDetail.GetContextValue("httpStatus")
-	if httpStatusObj != nil {
-		if statusCode, ok := httpStatusObj.(int); ok {
-			// Only 500-range errors (500-599) should trigger queue access
-			isServerStatus := statusCode >= 500 && statusCode < 600
-			if !isServerStatus {
-				log.Printf("HTTP status %d detected (non 500-range) - skipping queue", statusCode)
-			} else {
-				log.Printf("Server error detected from HTTP status: %d", statusCode)
+	statusCode := extractHTTPStatus(sdkErr)
+	retryableStatusCodes := []int{408, 429, 500, 502, 503, 504}
+	if globalSDK != nil && globalSDK.config != nil && globalSDK.config.RetryConfig != nil && len(globalSDK.config.RetryConfig.RetryableHTTPCodes) > 0 {
+		retryableStatusCodes = globalSDK.config.RetryConfig.RetryableHTTPCodes
+	}
+	if statusCode != nil {
+		for _, code := range retryableStatusCodes {
+			if *statusCode == code {
+				return true
 			}
-			return isServerStatus
-		} else {
-			log.Printf("Invalid HTTP status format: %v", httpStatusObj)
 		}
-	} else {
-		log.Printf("No httpStatus in ErrorDetail context, not counting as server error")
 	}
 
-	// Fallback: use error codes only when HTTP status is unavailable
-	return sdkErr.ErrorDetail.Code != nil &&
-		(*sdkErr.ErrorDetail.Code == ErrorCodeInternalServerError ||
-			*sdkErr.ErrorDetail.Code == ErrorCodeServiceUnavailable)
+	if sdkErr.ErrorDetail.Retryable {
+		return true
+	}
+	if sdkErr.ErrorDetail.Code == nil {
+		return false
+	}
+	code := *sdkErr.ErrorDetail.Code
+	return code == ErrorCodeInternalServerError ||
+		code == ErrorCodeServiceUnavailable ||
+		code == ErrorCodeTimeoutError ||
+		code == ErrorCodeNetworkError ||
+		code == ErrorCodeRateLimitExceeded
+}
+
+func extractHTTPStatus(sdkErr *SDKError) *int {
+	if sdkErr == nil || sdkErr.ErrorDetail == nil {
+		return nil
+	}
+	httpStatusObj := sdkErr.ErrorDetail.GetContextValue("httpStatus")
+	if httpStatusObj == nil {
+		return nil
+	}
+	switch v := httpStatusObj.(type) {
+	case int:
+		return &v
+	case float64:
+		value := int(v)
+		return &value
+	case string:
+		if parsed, err := strconv.Atoi(v); err == nil {
+			return &parsed
+		}
+	}
+	return nil
 }
 
 // buildSourceObject Build source object from SourceRef for the request

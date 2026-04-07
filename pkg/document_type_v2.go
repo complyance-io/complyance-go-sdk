@@ -14,26 +14,167 @@ const (
 type GetsDocumentModifier string
 
 const (
-	GetsDocumentModifierB2B           GetsDocumentModifier = "b2b"
-	GetsDocumentModifierB2C           GetsDocumentModifier = "b2c"
-	GetsDocumentModifierExport        GetsDocumentModifier = "export"
-	GetsDocumentModifierSelfBilled    GetsDocumentModifier = "self_billed"
-	GetsDocumentModifierThirdParty    GetsDocumentModifier = "third_party"
-	GetsDocumentModifierNominalSupply GetsDocumentModifier = "nominal_supply"
-	GetsDocumentModifierSummary       GetsDocumentModifier = "summary"
-	GetsDocumentModifierB2G           GetsDocumentModifier = "b2g"
+	GetsDocumentModifierB2B                 GetsDocumentModifier = "b2b"
+	GetsDocumentModifierB2C                 GetsDocumentModifier = "b2c"
+	GetsDocumentModifierB2G                 GetsDocumentModifier = "b2g"
+	GetsDocumentModifierExport              GetsDocumentModifier = "export"
+	GetsDocumentModifierSelfBilled          GetsDocumentModifier = "self_billed"
+	GetsDocumentModifierThirdParty          GetsDocumentModifier = "third_party"
+	GetsDocumentModifierNominal             GetsDocumentModifier = "nominal"
+	GetsDocumentModifierNominalSupply       GetsDocumentModifier = "nominal_supply"
+	GetsDocumentModifierSummary             GetsDocumentModifier = "summary"
+	GetsDocumentModifierPrepayment          GetsDocumentModifier = "prepayment"
+	GetsDocumentModifierAdjusted            GetsDocumentModifier = "adjusted"
+	GetsDocumentModifierReceipt             GetsDocumentModifier = "receipt"
+	GetsDocumentModifierZeroRated           GetsDocumentModifier = "zero_rated"
+	GetsDocumentModifierReverseCharge       GetsDocumentModifier = "reverse_charge"
+	GetsDocumentModifierContinuousSupply    GetsDocumentModifier = "continuous_supply"
+	GetsDocumentModifierFreeTradeZone       GetsDocumentModifier = "free_trade_zone"
+	GetsDocumentModifierIntraCommunitySupply GetsDocumentModifier = "intra_community_supply"
+	GetsDocumentModifierConsolidated        GetsDocumentModifier = "consolidated"
 )
 
 type GetsDocumentVariant string
 
 const (
-	GetsDocumentVariantStandard GetsDocumentVariant = "standard"
+	GetsDocumentVariantStandard             GetsDocumentVariant = "standard"
+	GetsDocumentVariantPartial              GetsDocumentVariant = "partial"
+	GetsDocumentVariantPartialConstruction  GetsDocumentVariant = "partial_construction"
+	GetsDocumentVariantPartialFinalConstruction GetsDocumentVariant = "partial_final_construction"
+	GetsDocumentVariantFinalConstruction    GetsDocumentVariant = "final_construction"
 )
 
 type GetsDocumentTypeV2 struct {
 	Base      string   `json:"base"`
 	Modifiers []string `json:"modifiers,omitempty"`
 	Variant   *string  `json:"variant,omitempty"`
+}
+
+type GetsDocumentType = GetsDocumentTypeV2
+
+var BASE = struct {
+	TaxInvoice        GetsDocumentBase
+	SimplifiedInvoice GetsDocumentBase
+	CreditNote        GetsDocumentBase
+	DebitNote         GetsDocumentBase
+}{
+	TaxInvoice:        GetsDocumentBaseTaxInvoice,
+	SimplifiedInvoice: GetsDocumentBaseSimplifiedInvoice,
+	CreditNote:        GetsDocumentBaseCreditNote,
+	DebitNote:         GetsDocumentBaseDebitNote,
+}
+
+var MODIFIER = struct {
+	B2B                  GetsDocumentModifier
+	B2C                  GetsDocumentModifier
+	B2G                  GetsDocumentModifier
+	Export               GetsDocumentModifier
+	SelfBilled           GetsDocumentModifier
+	ThirdParty           GetsDocumentModifier
+	Nominal              GetsDocumentModifier
+	NominalSupply        GetsDocumentModifier
+	Summary              GetsDocumentModifier
+	Prepayment           GetsDocumentModifier
+	Adjusted             GetsDocumentModifier
+	Receipt              GetsDocumentModifier
+	ZeroRated            GetsDocumentModifier
+	ReverseCharge        GetsDocumentModifier
+	ContinuousSupply     GetsDocumentModifier
+	FreeTradeZone        GetsDocumentModifier
+	IntraCommunitySupply GetsDocumentModifier
+	Consolidated         GetsDocumentModifier
+}{
+	B2B:                  GetsDocumentModifierB2B,
+	B2C:                  GetsDocumentModifierB2C,
+	B2G:                  GetsDocumentModifierB2G,
+	Export:               GetsDocumentModifierExport,
+	SelfBilled:           GetsDocumentModifierSelfBilled,
+	ThirdParty:           GetsDocumentModifierThirdParty,
+	Nominal:              GetsDocumentModifierNominal,
+	NominalSupply:        GetsDocumentModifierNominalSupply,
+	Summary:              GetsDocumentModifierSummary,
+	Prepayment:           GetsDocumentModifierPrepayment,
+	Adjusted:             GetsDocumentModifierAdjusted,
+	Receipt:              GetsDocumentModifierReceipt,
+	ZeroRated:            GetsDocumentModifierZeroRated,
+	ReverseCharge:        GetsDocumentModifierReverseCharge,
+	ContinuousSupply:     GetsDocumentModifierContinuousSupply,
+	FreeTradeZone:        GetsDocumentModifierFreeTradeZone,
+	IntraCommunitySupply: GetsDocumentModifierIntraCommunitySupply,
+	Consolidated:         GetsDocumentModifierConsolidated,
+}
+
+type GetsDocumentTypeBuilder struct {
+	base      string
+	modifiers []string
+	variant   *string
+}
+
+func NewGetsDocumentTypeBuilder() *GetsDocumentTypeBuilder {
+	return &GetsDocumentTypeBuilder{
+		base:      string(GetsDocumentBaseTaxInvoice),
+		modifiers: []string{},
+	}
+}
+
+func (b *GetsDocumentTypeBuilder) Base(base string) *GetsDocumentTypeBuilder {
+	b.base = strings.ToLower(strings.TrimSpace(base))
+	return b
+}
+
+func (b *GetsDocumentTypeBuilder) Modifier(modifier string) *GetsDocumentTypeBuilder {
+	return b.Modifiers([]string{modifier})
+}
+
+func (b *GetsDocumentTypeBuilder) AddModifier(modifier string) *GetsDocumentTypeBuilder {
+	return b.Modifier(modifier)
+}
+
+func (b *GetsDocumentTypeBuilder) Modifiers(modifiers []string) *GetsDocumentTypeBuilder {
+	current := append([]string{}, b.modifiers...)
+	current = append(current, modifiers...)
+	normalized := make([]string, 0, len(current))
+	seen := map[string]bool{}
+	for _, modifier := range current {
+		value := strings.ToLower(strings.TrimSpace(modifier))
+		if value == "" || seen[value] {
+			continue
+		}
+		normalized = append(normalized, value)
+		seen[value] = true
+	}
+	b.modifiers = normalized
+	return b
+}
+
+func (b *GetsDocumentTypeBuilder) Variant(variant *string) *GetsDocumentTypeBuilder {
+	if variant == nil {
+		b.variant = nil
+		return b
+	}
+	value := strings.ToLower(strings.TrimSpace(*variant))
+	if value == "" {
+		b.variant = nil
+		return b
+	}
+	b.variant = &value
+	return b
+}
+
+func (b *GetsDocumentTypeBuilder) Build() *GetsDocumentType {
+	return NewGetsDocumentTypeV2(b.base, b.modifiers, b.variant)
+}
+
+type docTypeFactory struct{}
+
+var DocType = docTypeFactory{}
+
+func (docTypeFactory) Of(base GetsDocumentBase, modifiers ...GetsDocumentModifier) *GetsDocumentType {
+	modifierStrings := make([]string, 0, len(modifiers))
+	for _, modifier := range modifiers {
+		modifierStrings = append(modifierStrings, string(modifier))
+	}
+	return NewGetsDocumentTypeV2(string(base), modifierStrings, nil)
 }
 
 func NewGetsDocumentTypeV2(base string, modifiers []string, variant *string) *GetsDocumentTypeV2 {

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"time"
 )
 
 // GETSUnifySDK Main entry point for the GETS Unify Go SDK
@@ -50,7 +51,7 @@ func Configure(sdkConfig *SDKConfig) error {
 		sdkConfig.Environment == EnvironmentLocal,
 		globalSDK.apiClient.GetCircuitBreaker(),
 	)
-	
+
 	return nil
 }
 
@@ -157,11 +158,34 @@ func GetDetailedQueueStatus() *QueueStatus {
 	}
 }
 
+func GetQueueStatusDetailed() *QueueStatusDetailed {
+	if globalSDK != nil && globalSDK.queueManager != nil {
+		return globalSDK.queueManager.GetQueueStatusDetailed()
+	}
+	return &QueueStatusDetailed{
+		PendingCount:    0,
+		ProcessingCount: 0,
+		FailedCount:     0,
+		SuccessCount:    0,
+		TotalCount:      0,
+		IsRunning:       false,
+		IsPaused:        false,
+		QueueDir:        "",
+	}
+}
+
 // RetryFailedSubmissions Retry failed submissions
 func RetryFailedSubmissions() {
 	if globalSDK != nil && globalSDK.queueManager != nil {
 		globalSDK.queueManager.RetryFailedSubmissions()
 	}
+}
+
+func RetryFailed(queueItemID string) bool {
+	if globalSDK != nil && globalSDK.queueManager != nil {
+		return globalSDK.queueManager.RetryFailed(queueItemID)
+	}
+	return false
 }
 
 // CleanupOldSuccessFiles Clean up old success files
@@ -196,6 +220,25 @@ func ProcessPendingSubmissions() {
 	}
 }
 
+func PauseQueueProcessing() {
+	if globalSDK != nil && globalSDK.queueManager != nil {
+		globalSDK.queueManager.PauseProcessing()
+	}
+}
+
+func ResumeQueueProcessing() {
+	if globalSDK != nil && globalSDK.queueManager != nil {
+		globalSDK.queueManager.ResumeProcessing()
+	}
+}
+
+func DrainQueue(timeout time.Duration) bool {
+	if globalSDK != nil && globalSDK.queueManager != nil {
+		return globalSDK.queueManager.DrainQueue(timeout)
+	}
+	return true
+}
+
 // ProcessQueuedSubmissionsFirst Process queued submissions before handling new requests
 func ProcessQueuedSubmissionsFirst() {
 	if globalSDK != nil && globalSDK.queueManager != nil {
@@ -203,7 +246,6 @@ func ProcessQueuedSubmissionsFirst() {
 		globalSDK.queueManager.ProcessPendingSubmissionsNow()
 	}
 }
-
 
 // validateCountryForEnvironment Validate country restrictions based on current environment
 // Implements the three-tier country access control:

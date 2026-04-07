@@ -5,7 +5,6 @@ package complyancesdk
 
 import (
 	"log"
-	"strconv"
 	"time"
 )
 
@@ -46,12 +45,12 @@ func (c *CircuitBreaker) Execute(operation func() (interface{}, error)) (interfa
 		if c.shouldAttemptReset() {
 			c.state = CircuitStateHalfOpen
 		} else {
-				return nil, NewSDKError(NewErrorDetailWithCode(
-					ErrorCodeCircuitBreakerOpen,
-					"Circuit breaker is open - "+strconv.FormatInt(remainingTime/1000, 10)+" seconds remaining",
-				))
-			}
+			return nil, NewSDKError(NewErrorDetailWithCode(
+				ErrorCodeCircuitBreakerOpen,
+				"Circuit breaker is open - "+string(remainingTime/1000)+" seconds remaining",
+			))
 		}
+	}
 
 	result, err := operation()
 	if err != nil {
