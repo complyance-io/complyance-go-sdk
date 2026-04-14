@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/complyance-io/complyance-go-sdk/v3/pkg/models"
+	"github.com/complyance-io/sdk-go/v1/pkg/models"
 )
 
 // Default configuration values

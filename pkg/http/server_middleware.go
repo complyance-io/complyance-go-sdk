@@ -7,9 +7,9 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/complyance-io/complyance-go-sdk/v3/pkg/config"
-	"github.com/complyance-io/complyance-go-sdk/v3/pkg/errors"
-	"github.com/complyance-io/complyance-go-sdk/v3/pkg/models"
+	"github.com/complyance-io/sdk-go/v1/pkg/config"
+	"github.com/complyance-io/sdk-go/v1/pkg/errors"
+	"github.com/complyance-io/sdk-go/v1/pkg/models"
 )
 
 // ServerMiddleware provides HTTP middleware for Go web servers

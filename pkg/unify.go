@@ -348,10 +348,12 @@ func normalizeAndValidateDocumentTypeV2(documentTypeV2 *GetsDocumentTypeV2) (*Ge
 
 	base := strings.ToLower(strings.TrimSpace(documentTypeV2.Base))
 	allowed := map[string]bool{
-		string(GetsDocumentBaseTaxInvoice):        true,
-		string(GetsDocumentBaseSimplifiedInvoice): true,
-		string(GetsDocumentBaseCreditNote):        true,
-		string(GetsDocumentBaseDebitNote):         true,
+		string(GetsDocumentBaseTaxInvoice):           true,
+		string(GetsDocumentBaseSimplifiedInvoice):    true,
+		string(GetsDocumentBaseCreditNote):           true,
+		string(GetsDocumentBaseDebitNote):            true,
+		string(GetsDocumentBaseSimplifiedCreditNote): true,
+		string(GetsDocumentBaseSimplifiedDebitNote):  true,
 	}
 	if !allowed[base] {
 		return nil, NewSDKError(NewErrorDetailWithCode(

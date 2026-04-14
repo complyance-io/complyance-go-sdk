@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/complyance-io/complyance-go-sdk/v3/pkg/errors"
+	"github.com/complyance-io/sdk-go/v1/pkg/errors"
 )
 
 // MiddlewareFunc is a function that processes a request before it's sent

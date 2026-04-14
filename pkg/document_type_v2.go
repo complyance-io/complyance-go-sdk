@@ -5,43 +5,54 @@ import "strings"
 type GetsDocumentBase string
 
 const (
-	GetsDocumentBaseTaxInvoice        GetsDocumentBase = "tax_invoice"
-	GetsDocumentBaseSimplifiedInvoice GetsDocumentBase = "simplified_invoice"
-	GetsDocumentBaseCreditNote        GetsDocumentBase = "credit_note"
-	GetsDocumentBaseDebitNote         GetsDocumentBase = "debit_note"
+	GetsDocumentBaseTaxInvoice           GetsDocumentBase = "tax_invoice"
+	GetsDocumentBaseSimplifiedInvoice    GetsDocumentBase = "simplified_invoice"
+	GetsDocumentBaseCreditNote           GetsDocumentBase = "credit_note"
+	GetsDocumentBaseDebitNote            GetsDocumentBase = "debit_note"
+	GetsDocumentBaseSimplifiedCreditNote GetsDocumentBase = "simplified_credit_note"
+	GetsDocumentBaseSimplifiedDebitNote  GetsDocumentBase = "simplified_debit_note"
 )
 
 type GetsDocumentModifier string
 
 const (
-	GetsDocumentModifierB2B                 GetsDocumentModifier = "b2b"
-	GetsDocumentModifierB2C                 GetsDocumentModifier = "b2c"
-	GetsDocumentModifierB2G                 GetsDocumentModifier = "b2g"
-	GetsDocumentModifierExport              GetsDocumentModifier = "export"
-	GetsDocumentModifierSelfBilled          GetsDocumentModifier = "self_billed"
-	GetsDocumentModifierThirdParty          GetsDocumentModifier = "third_party"
-	GetsDocumentModifierNominal             GetsDocumentModifier = "nominal"
-	GetsDocumentModifierNominalSupply       GetsDocumentModifier = "nominal_supply"
-	GetsDocumentModifierSummary             GetsDocumentModifier = "summary"
-	GetsDocumentModifierPrepayment          GetsDocumentModifier = "prepayment"
-	GetsDocumentModifierAdjusted            GetsDocumentModifier = "adjusted"
-	GetsDocumentModifierReceipt             GetsDocumentModifier = "receipt"
-	GetsDocumentModifierZeroRated           GetsDocumentModifier = "zero_rated"
-	GetsDocumentModifierReverseCharge       GetsDocumentModifier = "reverse_charge"
-	GetsDocumentModifierContinuousSupply    GetsDocumentModifier = "continuous_supply"
-	GetsDocumentModifierFreeTradeZone       GetsDocumentModifier = "free_trade_zone"
+	GetsDocumentModifierB2B                  GetsDocumentModifier = "b2b"
+	GetsDocumentModifierB2C                  GetsDocumentModifier = "b2c"
+	GetsDocumentModifierB2G                  GetsDocumentModifier = "b2g"
+	GetsDocumentModifierExport               GetsDocumentModifier = "export"
+	GetsDocumentModifierSelfBilled           GetsDocumentModifier = "self_billed"
+	GetsDocumentModifierThirdParty           GetsDocumentModifier = "third_party"
+	GetsDocumentModifierNominal              GetsDocumentModifier = "nominal"
+	GetsDocumentModifierNominalSupply        GetsDocumentModifier = "nominal_supply"
+	GetsDocumentModifierSummary              GetsDocumentModifier = "summary"
+	GetsDocumentModifierPrepayment           GetsDocumentModifier = "prepayment"
+	GetsDocumentModifierAdjusted             GetsDocumentModifier = "adjusted"
+	GetsDocumentModifierReceipt              GetsDocumentModifier = "receipt"
+	GetsDocumentModifierZeroRated            GetsDocumentModifier = "zero_rated"
+	GetsDocumentModifierReverseCharge        GetsDocumentModifier = "reverse_charge"
+	GetsDocumentModifierContinuousSupply     GetsDocumentModifier = "continuous_supply"
+	GetsDocumentModifierFreeTradeZone        GetsDocumentModifier = "free_trade_zone"
+	GetsDocumentModifierDeemedSupply         GetsDocumentModifier = "deemed_supply"
+	GetsDocumentModifierMarginScheme         GetsDocumentModifier = "margin_scheme"
+	GetsDocumentModifierDisclosedAgent       GetsDocumentModifier = "disclosed_agent"
+	GetsDocumentModifierECommerce            GetsDocumentModifier = "e_commerce"
+	GetsDocumentModifierOutOfScope           GetsDocumentModifier = "out_of_scope"
+	GetsDocumentModifierIntraCommunity       GetsDocumentModifier = "intra_community"
 	GetsDocumentModifierIntraCommunitySupply GetsDocumentModifier = "intra_community_supply"
-	GetsDocumentModifierConsolidated        GetsDocumentModifier = "consolidated"
+	GetsDocumentModifierConsolidated         GetsDocumentModifier = "consolidated"
 )
 
 type GetsDocumentVariant string
 
 const (
-	GetsDocumentVariantStandard             GetsDocumentVariant = "standard"
-	GetsDocumentVariantPartial              GetsDocumentVariant = "partial"
-	GetsDocumentVariantPartialConstruction  GetsDocumentVariant = "partial_construction"
+	GetsDocumentVariantStandard                 GetsDocumentVariant = "standard"
+	GetsDocumentVariantAdvance                  GetsDocumentVariant = "advance"
+	GetsDocumentVariantRefund                   GetsDocumentVariant = "refund"
+	GetsDocumentVariantPartial                  GetsDocumentVariant = "partial"
+	GetsDocumentVariantPartialConstruction      GetsDocumentVariant = "partial_construction"
 	GetsDocumentVariantPartialFinalConstruction GetsDocumentVariant = "partial_final_construction"
-	GetsDocumentVariantFinalConstruction    GetsDocumentVariant = "final_construction"
+	GetsDocumentVariantFinalConstruction        GetsDocumentVariant = "final_construction"
+	GetsDocumentVariantCorrective               GetsDocumentVariant = "corrective"
 )
 
 type GetsDocumentTypeV2 struct {
@@ -53,15 +64,19 @@ type GetsDocumentTypeV2 struct {
 type GetsDocumentType = GetsDocumentTypeV2
 
 var BASE = struct {
-	TaxInvoice        GetsDocumentBase
-	SimplifiedInvoice GetsDocumentBase
-	CreditNote        GetsDocumentBase
-	DebitNote         GetsDocumentBase
+	TaxInvoice           GetsDocumentBase
+	SimplifiedInvoice    GetsDocumentBase
+	CreditNote           GetsDocumentBase
+	DebitNote            GetsDocumentBase
+	SimplifiedCreditNote GetsDocumentBase
+	SimplifiedDebitNote  GetsDocumentBase
 }{
-	TaxInvoice:        GetsDocumentBaseTaxInvoice,
-	SimplifiedInvoice: GetsDocumentBaseSimplifiedInvoice,
-	CreditNote:        GetsDocumentBaseCreditNote,
-	DebitNote:         GetsDocumentBaseDebitNote,
+	TaxInvoice:           GetsDocumentBaseTaxInvoice,
+	SimplifiedInvoice:    GetsDocumentBaseSimplifiedInvoice,
+	CreditNote:           GetsDocumentBaseCreditNote,
+	DebitNote:            GetsDocumentBaseDebitNote,
+	SimplifiedCreditNote: GetsDocumentBaseSimplifiedCreditNote,
+	SimplifiedDebitNote:  GetsDocumentBaseSimplifiedDebitNote,
 }
 
 var MODIFIER = struct {
@@ -81,6 +96,12 @@ var MODIFIER = struct {
 	ReverseCharge        GetsDocumentModifier
 	ContinuousSupply     GetsDocumentModifier
 	FreeTradeZone        GetsDocumentModifier
+	DeemedSupply         GetsDocumentModifier
+	MarginScheme         GetsDocumentModifier
+	DisclosedAgent       GetsDocumentModifier
+	ECommerce            GetsDocumentModifier
+	OutOfScope           GetsDocumentModifier
+	IntraCommunity       GetsDocumentModifier
 	IntraCommunitySupply GetsDocumentModifier
 	Consolidated         GetsDocumentModifier
 }{
@@ -100,8 +121,34 @@ var MODIFIER = struct {
 	ReverseCharge:        GetsDocumentModifierReverseCharge,
 	ContinuousSupply:     GetsDocumentModifierContinuousSupply,
 	FreeTradeZone:        GetsDocumentModifierFreeTradeZone,
+	DeemedSupply:         GetsDocumentModifierDeemedSupply,
+	MarginScheme:         GetsDocumentModifierMarginScheme,
+	DisclosedAgent:       GetsDocumentModifierDisclosedAgent,
+	ECommerce:            GetsDocumentModifierECommerce,
+	OutOfScope:           GetsDocumentModifierOutOfScope,
+	IntraCommunity:       GetsDocumentModifierIntraCommunity,
 	IntraCommunitySupply: GetsDocumentModifierIntraCommunitySupply,
 	Consolidated:         GetsDocumentModifierConsolidated,
+}
+
+var VARIANT = struct {
+	Standard                 GetsDocumentVariant
+	Advance                  GetsDocumentVariant
+	Refund                   GetsDocumentVariant
+	Partial                  GetsDocumentVariant
+	PartialConstruction      GetsDocumentVariant
+	PartialFinalConstruction GetsDocumentVariant
+	FinalConstruction        GetsDocumentVariant
+	Corrective               GetsDocumentVariant
+}{
+	Standard:                 GetsDocumentVariantStandard,
+	Advance:                  GetsDocumentVariantAdvance,
+	Refund:                   GetsDocumentVariantRefund,
+	Partial:                  GetsDocumentVariantPartial,
+	PartialConstruction:      GetsDocumentVariantPartialConstruction,
+	PartialFinalConstruction: GetsDocumentVariantPartialFinalConstruction,
+	FinalConstruction:        GetsDocumentVariantFinalConstruction,
+	Corrective:               GetsDocumentVariantCorrective,
 }
 
 type GetsDocumentTypeBuilder struct {

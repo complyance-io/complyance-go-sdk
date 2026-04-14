@@ -2,7 +2,6 @@
 API Client for the Complyance SDK matching Python SDK exactly.
 */
 package complyancesdk
-
 import (
 	"bytes"
 	"encoding/json"
