@@ -128,10 +128,33 @@ func SubmitPayload(clientPayloadJSON string, sourceID string, country Country, d
 	return globalSDK.apiClient.SendPayload(clientPayloadJSON, source, country, documentType)
 }
 
-// GetStatus Get the status of a submission by its ID
-func GetStatus(submissionID string) string {
-	// Stub: In a real implementation, this would query the API or local cache.
-	return "QUEUED"
+// GetDocumentStatus gets retrieval status by documentId.
+func GetDocumentStatus(documentID string) (map[string]interface{}, error) {
+	if globalSDK == nil || globalSDK.apiClient == nil {
+		return nil, NewSDKError(NewErrorDetailWithCode(
+			ErrorCodeMissingField,
+			"SDK not configured",
+		).WithSuggestion("Call Configure() first."))
+	}
+
+	return globalSDK.apiClient.GetDocumentStatus(documentID)
+}
+
+// GetSubmissionStatus is deprecated and intentionally blocked.
+func GetSubmissionStatus(submissionID string) (map[string]interface{}, error) {
+	if globalSDK == nil || globalSDK.apiClient == nil {
+		return nil, NewSDKError(NewErrorDetailWithCode(
+			ErrorCodeMissingField,
+			"SDK not configured",
+		).WithSuggestion("Call Configure() first."))
+	}
+
+	return globalSDK.apiClient.GetSubmissionStatus(submissionID)
+}
+
+// GetStatus is deprecated and forwards to the deprecated submissionId endpoint behavior.
+func GetStatus(submissionID string) (map[string]interface{}, error) {
+	return GetSubmissionStatus(submissionID)
 }
 
 // GetQueueStatus Get queue status and statistics

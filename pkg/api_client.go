@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -40,6 +41,83 @@ func NewAPIClient(apiKey string, environment Environment, retryConfig *RetryConf
 // GetCircuitBreaker Get the circuit breaker
 func (a *APIClient) GetCircuitBreaker() *CircuitBreaker {
 	return a.circuitBreaker
+}
+
+// GetDocumentStatus gets retrieval status by document ID.
+// Calls GET /api/v3/documents/{documentId}/status.
+func (a *APIClient) GetDocumentStatus(documentID string) (map[string]interface{}, error) {
+	normalized := strings.TrimSpace(documentID)
+	if normalized == "" {
+		return nil, NewSDKError(NewErrorDetailWithCode(
+			ErrorCodeInvalidArgument,
+			"Document ID is required",
+		).WithSuggestion("Provide a valid documentId to fetch retrieval status."))
+	}
+
+	path := fmt.Sprintf("/api/v3/documents/%s/status", url.PathEscape(normalized))
+	fullURL := strings.TrimSuffix(a.baseURL, "/unify") + path
+
+	req, err := http.NewRequest("GET", fullURL, nil)
+	if err != nil {
+		return nil, NewSDKError(NewErrorDetailWithCode(
+			ErrorCodeNetworkError,
+			fmt.Sprintf("Failed to create HTTP request: %v", err),
+		))
+	}
+
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Authorization", "Bearer "+a.apiKey)
+	req.Header.Set("X-API-Key", a.apiKey)
+
+	resp, err := a.httpClient.Do(req)
+	if err != nil {
+		return nil, NewSDKError(NewErrorDetailWithCode(
+			ErrorCodeNetworkError,
+			fmt.Sprintf("Network error: %v", err),
+		).WithSuggestion("Check your network connection and try again"))
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, NewSDKError(NewErrorDetailWithCode(
+			ErrorCodeAPIError,
+			fmt.Sprintf("Failed to read response body: %v", err),
+		))
+	}
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		errorDetail := NewErrorDetailWithCode(
+			ErrorCodeAPIError,
+			fmt.Sprintf("Retrieval status request failed with status %d", resp.StatusCode),
+		).WithSuggestion("Check your API key, base URL, and documentId.")
+		errorDetail.AddContextValue("httpStatus", resp.StatusCode)
+		errorDetail.AddContextValue("responseBody", string(body))
+		return nil, NewSDKError(errorDetail)
+	}
+
+	if len(body) == 0 {
+		return map[string]interface{}{}, nil
+	}
+
+	var parsed map[string]interface{}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return nil, NewSDKError(NewErrorDetailWithCode(
+			ErrorCodeAPIError,
+			fmt.Sprintf("Failed to parse retrieval status response: %v", err),
+		))
+	}
+
+	return parsed, nil
+}
+
+// GetSubmissionStatus is deprecated and intentionally blocked.
+func (a *APIClient) GetSubmissionStatus(submissionID string) (map[string]interface{}, error) {
+	_ = submissionID
+	return nil, NewSDKError(NewErrorDetailWithCode(
+		ErrorCodeInvalidArgument,
+		"submissionId status retrieval is no longer supported",
+	).WithSuggestion("Use GetDocumentStatus(documentID) for polling status and trace endpoints."))
 }
 
 // SendPayload Send payload matching Python SDK

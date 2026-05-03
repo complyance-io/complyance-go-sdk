@@ -7,6 +7,7 @@ import (
 	"log"
 	"math"
 	"math/rand"
+	"strconv"
 	"time"
 )
 
@@ -64,7 +65,7 @@ func (r *RetryStrategy) Execute(operation func() (interface{}, error), operation
 		// Create max retries exceeded error
 		maxRetriesError := NewErrorDetailWithCode(
 			ErrorCodeMaxRetriesExceeded,
-			"Operation failed after "+string(r.config.MaxAttempts)+" retry attempts",
+			"Operation failed after "+strconv.Itoa(r.config.MaxAttempts)+" retry attempts",
 		)
 		maxRetriesError.Suggestion = &[]string{"Maximum retry attempts exceeded. Check your network connection and try again later"}[0]
 		maxRetriesError.AddContextValue("maxAttempts", r.config.MaxAttempts)

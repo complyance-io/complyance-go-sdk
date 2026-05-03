@@ -5,9 +5,9 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/complyance-io/sdk-go/v1/pkg/config"
-	"github.com/complyance-io/sdk-go/v1/pkg/errors"
-	"github.com/complyance-io/sdk-go/v1/pkg/retry"
+	"github.com/complyance-io/complyance-go-sdk/v3/pkg/config"
+	"github.com/complyance-io/complyance-go-sdk/v3/pkg/errors"
+	"github.com/complyance-io/complyance-go-sdk/v3/pkg/retry"
 )
 
 // RetryMiddleware implements retry logic for HTTP requests
