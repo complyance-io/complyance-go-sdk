@@ -181,22 +181,8 @@ func (a *APIClient) sendUnifyRequestInternal(request *UnifyRequest) (*UnifyRespo
 		headers["X-Correlation-ID"] = *request.GetCorrelationID()
 	}
 
-	// Log the request headers
-	log.Println("📤 API REQUEST HEADERS:")
-	for key, value := range headers {
-		if key == "Authorization" {
-			log.Printf("   %s: Bearer %s", key, value[7:]) // Hide the actual token
-		} else {
-			log.Printf("   %s: %s", key, value)
-		}
-	}
-
-	// Log the complete request payload
-	log.Println("📤 API REQUEST PAYLOAD:")
-	var prettyPayload map[string]interface{}
-	json.Unmarshal(jsonPayload, &prettyPayload)
-	prettyJSON, _ := json.MarshalIndent(prettyPayload, "", "  ")
-	log.Println(string(prettyJSON))
+	// Never log headers/payload here because they may contain credentials
+	// (e.g. Authorization bearer token and apiKey in request payload).
 
 	// Create HTTP request
 	req, err := http.NewRequest("POST", a.baseURL, bytes.NewBuffer(jsonPayload))

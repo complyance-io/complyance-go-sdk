@@ -131,6 +131,26 @@ var MODIFIER = struct {
 	Consolidated:         GetsDocumentModifierConsolidated,
 }
 
+var VARIANT = struct {
+	Standard                 GetsDocumentVariant
+	Advance                  GetsDocumentVariant
+	Refund                   GetsDocumentVariant
+	Partial                  GetsDocumentVariant
+	PartialConstruction      GetsDocumentVariant
+	PartialFinalConstruction GetsDocumentVariant
+	FinalConstruction        GetsDocumentVariant
+	Corrective               GetsDocumentVariant
+}{
+	Standard:                 GetsDocumentVariantStandard,
+	Advance:                  GetsDocumentVariantAdvance,
+	Refund:                   GetsDocumentVariantRefund,
+	Partial:                  GetsDocumentVariantPartial,
+	PartialConstruction:      GetsDocumentVariantPartialConstruction,
+	PartialFinalConstruction: GetsDocumentVariantPartialFinalConstruction,
+	FinalConstruction:        GetsDocumentVariantFinalConstruction,
+	Corrective:               GetsDocumentVariantCorrective,
+}
+
 type GetsDocumentTypeBuilder struct {
 	base      string
 	modifiers []string
